@@ -95,15 +95,12 @@ export function BeatsProvider({ children }: { children: ReactNode }) {
     return false; // Continue playing
   }, [address, beatsBalance, beatsSpent]);
 
-  // Add beats (after deposit) - resets spent counter
-  const addBeats = useCallback((amount: number) => {
-    if (address) {
-      setBeatsSpent(0);
-      setSpentBeats(address, 0);
-    }
+  // Add beats (after deposit) - just refetch from contract
+  // Don't reset spent counter - those beats were already consumed
+  const addBeats = useCallback((_amount: number) => {
     // Refetch from contract to get updated balance
     refetch();
-  }, [address, refetch]);
+  }, [refetch]);
 
   // Refresh balance from contract
   const refreshBalance = useCallback(() => {
