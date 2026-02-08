@@ -1,124 +1,118 @@
 # 🔲 BeatStream — What Needs To Be Done
 
 > Remaining work to go from "backend complete" to "hackathon-ready demo".
+> **Updated: Feb 8, 2026** — after ENS smoke test pass.
 
 ---
 
-## ✅ Recently Completed
+## ✅ What Has Been Completed
 
-- [x] Supabase tables + seed data created (schema.sql)
-- [x] Circle developer wallet created (`24071f33...` / `0xdfa721...`)
-- [x] All API keys configured and working
-- [x] Server compiles with 0 TS errors and starts cleanly
-- [x] **ENS on-chain integration** — viem + NameWrapper on Sepolia
-  - `registerArtistSubdomain()` → creates `<artist>.beatstream.eth` on-chain
-  - `mintFanSubdomain()` → creates `fan-<wallet>.artist.beatstream.eth`
-  - Read operations: `isSubdomainRegistered()`, `resolveENS()`, `getENSText()`
-  - Write operations: `setENSTextRecord()` for avatar/url/description
-  - Graceful fallback to simulation if we don't own parent name
-- [x] **Database upgrade (migration_v2.sql)** — audio support + stream history
-  - Tracks: `audio_url`, `genre`, `play_count` columns
-  - Artists: `bio`, `genre`, `total_streams`, `ens_registered` columns
-  - New tables: `fan_subdomains`, `stream_history`
-  - RPC functions: `increment_play_count`, `increment_artist_streams`, `record_stream`, `get_fan_artist_beats`
-  - Supabase Storage bucket `audio` for MP3 files
-- [x] **ENS API routes** — `/api/ens/register-artist`, `/api/ens/mint-fan-subdomain`, `/api/ens/resolve/:name`, `/api/ens/check/:name`, `/api/ens/fan-subdomains/:wallet`
-- [x] **Audio upload route** — `POST /api/tracks/:id/audio` with raw body upload to Supabase Storage
-- [x] **Stream history** — settle endpoint now records stream history + increments play/artist counts
-- [x] **Artist registration** — now accepts `bio` and `genre`
+- [x] Smart contracts: `BeatStreamVault.sol` + `MockUSDC.sol` deployed to local Hardhat
+- [x] Backend server: Express + WebSocket on port 4000, **0 TypeScript errors**
+- [x] Supabase: All tables created + seed data (users, artists, tracks, sessions)
+- [x] Migration v2: `fan_subdomains`, `stream_history` tables, RPC functions, `audio` storage bucket — **run in Supabase ✅**
+- [x] Circle SDK: API key configured, entity secret registered, developer wallet created (`0xdfa721...`)
+- [x] Yellow SDK: `@erc7824/nitrolite` v0.5.3 imported, ClearNode WebSocket connects
+- [x] ENS: `beatstream.eth` registered on Sepolia (tx `0xc2413f...`, block 10217506)
+- [x] ENS service: Full on-chain read/write code via viem + NameWrapper on Sepolia
+- [x] ENS API routes: 5 endpoints mounted at `/api/ens/*`
+- [x] Audio upload: `POST /api/tracks/:id/audio` → Supabase Storage
+- [x] Stream history: settle endpoint records history + increments play count + artist streams
+- [x] Fan subdomain eligibility check: integrated into session settle flow
+- [x] All API keys configured in `.env`
+- [x] Smoke test: All 6 endpoints return valid JSON responses ✅
 
 ---
 
-## 🔴 Critical Path (Must-Have)
+## 🔴 What's Broken / Not Working — Fix These First
 
-### 1. Run Database Migration ⏳
-- [ ] Run `packages/server/src/db/migration_v2.sql` in Supabase SQL Editor
-- [ ] This adds audio columns, fan_subdomains table, stream_history table, and RPC functions
-- [ ] Creates the `audio` storage bucket for MP3 files
+### 1. ENS Subdomain Registration Reverts (simulated mode)
+**Symptom**: `POST /api/ens/register-artist` returns `simulated: true` instead of creating on-chain.
+**Root cause**: `NameWrapper.setSubnodeRecord()` reverts because the server wallet may not be the owner in the NameWrapper. We registered `beatstream.eth` via the ENS app but it may not be "wrapped".
+**Fix options**:
+- **A)** Go to app.ens.domains → `beatstream.eth` → "Wrap Name" → this gives NameWrapper ownership
+- **B)** Change `ens.ts` to use `ENSRegistry.setSubnodeOwner()` instead (works with unwrapped names)
+- **C)** Use the ENS app to set our server wallet as an approved operator on the NameWrapper
+**Time estimate**: 30 min – 1 hour
+**How to verify**: Response has `simulated: false` and a real `txHash`.
 
-### 2. Register `beatstream.eth` on Sepolia ⏳
-- [ ] Go to [ENS App (Sepolia)](https://app.ens.domains/) on Sepolia testnet
-- [ ] Register `beatstream.eth` using the server wallet (`0xBB2FB35525A59D0576B98FE0D162FAe442545A32`)
-- [ ] Wrap it in NameWrapper so our server can create subdomains
-- [ ] Without this, ENS operations fall back to "simulated" mode (still works for demo)
+### 2. Yellow Network Auth Never Completes
+**Symptom**: Server logs `Auth request sent, waiting for challenge...` then nothing. ClearNode never responds. WebSocket reconnects every 5s.
+**Root cause**: Unknown. Possibly:
+- Need to deposit `ytest.usd` into Custody contract first
+- Auth request format doesn't match what sandbox expects
+- Sandbox may require whitelisting
+**Fix steps**:
+1. Check if Yellow requires a deposit before auth → Custody `0x019B65...` on Sepolia
+2. Get `ytest.usd` tokens (`0x1c7D4B...` on Sepolia) — may need to mint or request from faucet
+3. `approve()` Custody contract → `deposit()` tokens
+4. Try auth again
+5. If still fails, compare with Yellow's example code in `@erc7824/nitrolite` repo
+**Time estimate**: 1-2 hours
+**How to verify**: Server logs `✅ Authenticated with ClearNode!`
 
-### 3. End-to-End Smoke Test ⏳
-- [ ] Hit `GET /api/health` and `GET /api/status` — verify all green
-- [ ] Test `POST /api/artists/register` with bio + genre
-- [ ] Test `POST /api/tracks` with genre + audioUrl
-- [ ] Test `POST /api/tracks/:id/audio` — upload an MP3
-- [ ] Test `POST /api/ens/register-artist` — register ENS subdomain
-- [ ] Test full stream → settle → check fan subdomain eligibility
-- [ ] Test `POST /api/ens/mint-fan-subdomain` after 100+ beats streamed
-
-### 4. Frontend (Separate Branch — Teammate) 🔲
-- [ ] Landing page with wallet connect
-- [ ] Deposit USDC page
-- [ ] Streaming player with WebSocket + live beat counter + audio playback
-- [ ] Artist profile with ENS name display
-- [ ] Fan subdomain claim UI
-- [ ] Merge into main when ready
-
----
-
-## 🟡 Yellow Network — Deeper Integration (For $15k Prize)
-
-ClearNode auth is connected. To strengthen:
-
-- [ ] Verify full auth challenge-response completes
-- [ ] Test actual app session open → state update → close lifecycle with ClearNode
-- [ ] Deposit `ytest.usd` tokens into Yellow Custody contract on Sepolia
-- [ ] Handle channel recovery on reconnection
+### 3. Circle Vault Not Deployed on Arc Testnet
+**Symptom**: `settlePayment()` simulates. No real on-chain settlement.
+**Root cause**: `CIRCLE_VAULT_CONTRACT_ID` and `CIRCLE_USDC_CONTRACT_ID` are placeholder values in `.env`.
+**Fix steps**:
+1. Deploy `BeatStreamVault.sol` on Arc Testnet via Circle SDK or dashboard
+2. Set `CIRCLE_VAULT_CONTRACT_ID=<contractId>` in `.env`
+3. Set `CIRCLE_USDC_CONTRACT_ID=<usdcContractId>` in `.env`
+4. Restart server
+**Time estimate**: 30 min
+**How to verify**: `POST /api/sessions/settle` returns `settlement.success: true` with a real tx hash.
 
 ---
 
-## 🟡 Circle Arc — Deeper Integration (For $10k Prize)
+## 🟡 Workflow — Exactly What To Do Next
 
-SDK is connected with real API key + developer wallet. To strengthen:
+```
+Step 1: Fix ENS wrapping                      (30 min)
+  └─ Wrap beatstream.eth in NameWrapper OR switch to Registry calls
+  └─ Test: POST /api/ens/register-artist → simulated: false ✅
 
-- [ ] Deploy BeatStreamVault on Arc Testnet via Circle SDK
-- [ ] Test real `settlePayment()` execution on-chain
-- [ ] Set up webhook listener for deposit confirmations
-- [ ] Use Circle's Gas Station for gasless user transactions
+Step 2: Fix Yellow auth                       (1-2 hrs)
+  └─ Get ytest.usd tokens on Sepolia
+  └─ Deposit into Custody contract
+  └─ Test: server logs "Authenticated with ClearNode!" ✅
+
+Step 3: Test Yellow app session lifecycle      (30 min)
+  └─ Open app session → submit state updates → close
+  └─ Test: POST /api/sessions/start returns appSessionId ✅
+
+Step 4: Deploy vault on Circle Arc Testnet     (30 min)
+  └─ Deploy BeatStreamVault via Circle SDK
+  └─ Set CIRCLE_VAULT_CONTRACT_ID in .env
+  └─ Test: POST /api/sessions/settle returns real tx hash ✅
+
+Step 5: End-to-end test                        (1 hr)
+  └─ Register artist → create track → upload audio
+  └─ Register user → deposit USDC → start stream
+  └─ Stream for 10 seconds via WebSocket
+  └─ Settle → verify artist earnings + stream history
+  └─ Check fan subdomain eligibility
+
+Step 6: Frontend (separate branch)             (teammate)
+  └─ Merge and wire to backend
+
+Step 7: Polish + demo                          (1-2 hrs)
+  └─ Demo video, pitch deck, final testing
+```
 
 ---
 
 ## 🟢 Nice-to-Have (If Time Permits)
 
-### Audio Streaming
 - [ ] Chunked audio delivery (5-second chunks gated by beat payment)
-- [ ] `MediaSource` API for streaming playback in browser
+- [ ] `MediaSource` API for browser streaming playback
 - [ ] Waveform visualization
-
-### Backend Hardening
 - [ ] Rate limiting on API routes
-- [ ] Request validation (zod schemas)
+- [ ] Zod validation on all request bodies
 - [ ] Session timeout (auto-settle after inactivity)
-
-### Testing & DevOps
 - [ ] Hardhat unit tests for BeatStreamVault
-- [ ] Server API integration tests
-- [ ] Deploy contracts to Sepolia
+- [ ] Deploy contracts to Sepolia (not just local)
 - [ ] Deploy server to Railway/Fly.io
 - [ ] Demo video + pitch deck
-
----
-
-## 📋 Suggested Build Order
-
-```
-1. ✅ Supabase tables + seed data         (done)
-2. ✅ Circle wallet creation              (done)
-3. ✅ ENS on-chain integration            (done)
-4. ✅ Database upgrade for audio          (done)
-5. ⏳ Run migration_v2.sql in Supabase    (2 min)  ← NEXT
-6. ⏳ Register beatstream.eth on Sepolia  (15 min)
-7. ⏳ Smoke test all endpoints            (30 min)
-8. ⏳ Yellow deposit ytest.usd + test     (1-2 hours)
-9. ⏳ Frontend merge + wiring             (teammate)
-10.⏳ End-to-end demo flow               (1 hour)
-11.⏳ Polish + demo recording            (1-2 hours)
-```
 
 ---
 
@@ -138,7 +132,7 @@ CIRCLE_WALLET_ID=24071f33-312a-...   # ✅ created
 CIRCLE_WALLET_ADDRESS=0xdfa721...    # ✅ created
 PORT=4000
 
-# ⚠️ STILL NEEDED (after Circle vault deployment)
-CIRCLE_VAULT_CONTRACT_ID=            # After deploying vault via Circle
-CIRCLE_USDC_CONTRACT_ID=             # After deploying vault via Circle
+# ⚠️ STILL PLACEHOLDER (need Circle vault deployment)
+CIRCLE_VAULT_CONTRACT_ID=your_deployed_vault_contract_id
+CIRCLE_USDC_CONTRACT_ID=             # After deploying on Arc Testnet
 ```

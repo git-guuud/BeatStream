@@ -126,7 +126,8 @@ VALUES ('audio', 'audio', true)
 ON CONFLICT DO NOTHING;
 
 -- Allow public read access to audio files
-CREATE POLICY IF NOT EXISTS "Public audio read"
+DROP POLICY IF EXISTS "Public audio read" ON storage.objects;
+CREATE POLICY "Public audio read"
   ON storage.objects FOR SELECT
   USING (bucket_id = 'audio');
 

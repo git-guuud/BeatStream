@@ -8,6 +8,46 @@ Stream music, pay by the second using on-chain Beats (1000 Beats = 1 USDC), and 
 
 ---
 
+## ⚡ Current Status — What Works Right Now
+
+### ✅ What a user/developer CAN do today
+
+| Action | How | Status |
+|--------|-----|--------|
+| **Start the server** | `cd packages/server && npx tsx src/index.ts` | ✅ Works — 0 TS errors, all services init |
+| **Register as an artist** | `POST /api/artists/register` (wallet + signature) | ✅ Creates DB record, auto-generates `<name>.beatstream.eth` |
+| **Register as a listener** | `POST /api/users/register` (wallet + signature) | ✅ Creates DB record with beats balance |
+| **Browse tracks** | `GET /api/tracks` | ✅ Returns all tracks with genre, play_count, audio_url |
+| **Create a track** | `POST /api/tracks` (artist only, sig-gated) | ✅ Stores in Supabase with genre + audioUrl |
+| **Upload audio** | `POST /api/tracks/:id/audio` (raw MP3 body) | ✅ Uploads to Supabase Storage bucket |
+| **Start a stream** | `POST /api/sessions/start` | ✅ Creates session + opens Yellow app session (or fallback) |
+| **Stream via WebSocket** | `ws://localhost:4000/ws/stream` | ✅ Real-time beat_tick every second, debits 1 beat/sec |
+| **Settle a stream** | `POST /api/sessions/settle` | ✅ Closes Yellow session + settles via Circle + credits artist + records stream history |
+| **Check ENS subdomain** | `GET /api/ens/check/:name` | ✅ Queries NameWrapper on Sepolia |
+| **Resolve ENS name** | `GET /api/ens/resolve/:name` | ✅ Queries PublicResolver on Sepolia |
+| **View service status** | `GET /api/status` | ✅ Shows Yellow, Circle, ENS status in real-time |
+| **List fan subdomains** | `GET /api/ens/fan-subdomains/:wallet` | ✅ Returns subdomains from DB |
+
+### 🟡 What is CONNECTED but not fully end-to-end yet
+
+| Integration | What's working | What's missing |
+|-------------|---------------|----------------|
+| **Yellow Network** | SDK imported, ClearNode WebSocket connects, auth request sent, app session/state update/close code written | ClearNode never responds to auth challenge (reconnect loop). No `ytest.usd` tokens deposited into Custody contract. App sessions can't actually open without auth. |
+| **Circle Arc** | SDK imported, API key + entity secret registered, developer wallet created (`0xdfa721...`), settlement code written | BeatStreamVault not deployed on Arc Testnet via Circle SDK. `settlePayment()` will simulate/fail until vault is deployed. Missing `CIRCLE_VAULT_CONTRACT_ID` + `CIRCLE_USDC_CONTRACT_ID` in .env. |
+| **ENS** | `beatstream.eth` registered on Sepolia (tx `0xc2413f...`), NameWrapper + Resolver contracts configured, all read/write functions written | `setSubnodeRecord()` will revert because NameWrapper doesn't recognize our wallet as the owner of the wrapped name (ENS app registration vs NameWrapper wrapping are separate). Artist subdomain registration falls back to "simulated" mode. Need to **wrap** `beatstream.eth` in NameWrapper or use `setSubnodeOwner` on the Registry directly. |
+
+### ❌ What does NOT work yet
+
+| Feature | Why |
+|---------|-----|
+| **Artist actually gets `<name>.beatstream.eth` on-chain** | NameWrapper `setSubnodeRecord` reverts — we own `beatstream.eth` but it may not be wrapped in NameWrapper. Falls back to simulation (returns success but no on-chain tx). |
+| **Fan earns subdomain after 100+ beats** | Same NameWrapper issue. Eligibility check works, DB recording works, but on-chain minting simulates. |
+| **Real USDC settlement to artist** | Circle vault not deployed on Arc Testnet. `settlePayment()` simulates. |
+| **Real state channel payments** | Yellow auth never completes. All state channel calls return null/false gracefully. |
+| **Frontend** | In progress on a separate branch by a teammate. Not merged. |
+
+---
+
 ## 🏗️ Architecture
 
 ```
@@ -26,15 +66,6 @@ Stream music, pay by the second using on-chain Beats (1000 Beats = 1 USDC), and 
 │  (State channels via Nitrolite)   │  (Settlement + Wallets)  │
 └───────────────────────────────────┴──────────────────────────┘
 ```
-
-| Component | Tech | Status |
-|-----------|------|--------|
-| Smart Contracts | Solidity / Hardhat | ✅ Complete |
-| Backend Server | Express + WebSocket + Supabase | ✅ Complete (0 TS errors) |
-| Yellow Network | `@erc7824/nitrolite` — ClearNode state channels | ✅ Connected |
-| Circle Arc | Smart Contract Platform + Dev Wallets | ✅ Integrated |
-| ENS | On-chain subdomains via NameWrapper (Sepolia) | ✅ Complete |
-| Frontend | Next.js (Scaffold-ETH 2) | 🔲 In progress |
 
 ---
 
@@ -73,7 +104,6 @@ yarn deploy
 ### 4. Start Backend Server
 
 ```bash
-# Terminal 3
 cd packages/server
 npx tsx src/index.ts
 # Server starts on http://localhost:4000
@@ -82,7 +112,6 @@ npx tsx src/index.ts
 ### 5. Start Frontend
 
 ```bash
-# Terminal 4
 yarn start
 # Frontend on http://localhost:3000
 ```
@@ -130,24 +159,91 @@ yarn start
 
 ---
 
-## 🔌 Integrations
+## � TODO — What Needs To Be Done Next
 
-### Yellow Network ($15k Prize)
-- **`@erc7824/nitrolite`** SDK for state channels via ClearNode
-- EIP-712 auth, app sessions, real-time state updates (1 beat/sec)
-- Instant off-chain payments — no gas per stream second
+> **Read this if you're picking up the project.** Each section is ordered by priority.
 
-### Circle Arc ($10k Prize)
-- **Smart Contract Platform** for vault deployment + settlement
-- **Developer Controlled Wallets** for server-side operations
-- On-chain `settle()` converts Beats → USDC for artists
+### 🔴 Priority 1 — Make ENS subdomains work on-chain
 
-### ENS ($5k Prize)
-- **NameWrapper** integration on Sepolia via viem
-- Artist subdomains: `registerArtistSubdomain()` → on-chain
-- Fan loyalty subdomains: `mintFanSubdomain()` → on-chain
-- Text records: avatar, url, description
-- Graceful simulation fallback for demo environments
+**Problem**: We registered `beatstream.eth` on Sepolia via the ENS app, but the name may not be "wrapped" in the NameWrapper contract. Our code calls `NameWrapper.setSubnodeRecord()` which requires the caller to be the owner in the NameWrapper. If it's not wrapped, we need to either:
+
+**Option A — Wrap it (preferred)**:
+1. Go to [app.ens.domains](https://app.ens.domains/) → find `beatstream.eth` → click "Wrap Name" (if available)
+2. This transfers ownership to the NameWrapper, which then lets our server call `setSubnodeRecord()`
+
+**Option B — Use the Registry directly**:
+1. Change `ens.ts` to call `ENSRegistry.setSubnodeOwner()` instead of `NameWrapper.setSubnodeRecord()`
+2. Then call `Resolver.setAddr()` separately
+3. This works with unwrapped names but doesn't set fuses/expiry
+
+**Option C — Use `setSubnodeOwner` on NameWrapper**:
+1. Some NameWrapper versions allow `setSubnodeOwner` for the parent name owner
+2. Try wrapping + calling with the correct fuses
+
+**How to test**: After fixing, run:
+```bash
+curl -X POST http://localhost:4000/api/ens/register-artist \
+  -H "Content-Type: application/json" \
+  -d '{"wallet": "<artist_wallet>", "signature": "<sig>", "nonce": 1}'
+```
+If `simulated: false` in the response, it worked on-chain.
+
+### 🔴 Priority 2 — Make Yellow Network auth complete
+
+**Problem**: The server connects to `wss://clearnet-sandbox.yellow.com/ws` and sends an auth request, but the ClearNode never sends back an `auth_challenge`. The WebSocket stays connected but auth never completes, so `authenticated = false` forever.
+
+**Steps to fix**:
+1. **Check if we need to deposit first**: Yellow may require `ytest.usd` tokens in the Custody contract before allowing auth
+   - Custody contract: `0x019B65A265EB3363822f2752141b3dF16131b262` (Sepolia)
+   - Token: `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` (ytest.usd on Sepolia)
+   - Steps: Mint/acquire test tokens → `approve()` Custody contract → `deposit()` into Custody
+2. **Check the auth request format**: The `createAuthRequestMessage()` call may need different parameters. Compare with Yellow's example code.
+3. **Check Yellow Discord/docs**: The sandbox may require whitelisting or a specific `app_name`.
+4. **Test with Yellow's own example**: Clone `@erc7824/nitrolite` repo and try their example client.
+
+**How to verify**: When auth works, the server will log:
+```
+🟡 Yellow: Auth challenge received
+🟡 Yellow: Auth verify message sent
+🟡 Yellow: ✅ Authenticated with ClearNode!
+```
+
+### 🔴 Priority 3 — Deploy BeatStreamVault on Circle Arc Testnet
+
+**Problem**: The vault contract exists in `packages/hardhat/contracts/BeatStreamVault.sol` and is deployed locally, but not on Circle's Arc Testnet. Without it, `settlePayment()` simulates instead of doing real on-chain settlement.
+
+**Steps**:
+1. Use the Circle SDK to deploy:
+   ```ts
+   import { deployVaultContract } from "./services/arc.js";
+   const result = await deployVaultContract();
+   // Returns contractId — add to .env as CIRCLE_VAULT_CONTRACT_ID
+   ```
+2. Or deploy via Circle's dashboard at [console.circle.com](https://console.circle.com)
+3. After deployment, set these in `.env`:
+   ```
+   CIRCLE_VAULT_CONTRACT_ID=<from Circle dashboard>
+   CIRCLE_USDC_CONTRACT_ID=<USDC contract on Arc Testnet>
+   ```
+4. Test: `POST /api/sessions/settle` should show `settlement.success: true` with a real tx hash.
+
+### 🟡 Priority 4 — Frontend (Separate Branch)
+
+The frontend lives in `packages/nextjs/` on a separate branch. It needs:
+1. Wallet connect (Scaffold-ETH 2 provides this)
+2. Deposit USDC page → calls `POST /api/deposit`
+3. Track browser → `GET /api/tracks`
+4. Streaming player → connects to `ws://localhost:4000/ws/stream`
+5. Artist profile → shows ENS name, bio, genre, total streams
+6. Fan subdomain claim → `POST /api/ens/mint-fan-subdomain`
+
+### 🟢 Priority 5 — Polish
+
+- [ ] Run Hardhat tests for BeatStreamVault
+- [ ] Add zod validation on all API routes
+- [ ] Rate limiting
+- [ ] Session timeout (auto-settle after inactivity)
+- [ ] Demo video + pitch deck
 
 ---
 
@@ -187,10 +283,10 @@ packages/
 
 ---
 
-## 📖 Documentation
+## 📖 More Documentation
 
 - **[README_DONE.md](./README_DONE.md)** — Detailed technical breakdown of everything built
-- **[README_TODO.md](./README_TODO.md)** — Remaining tasks and build order
+- **[README_TODO.md](./README_TODO.md)** — Granular remaining tasks with build order
 
 ---
 
