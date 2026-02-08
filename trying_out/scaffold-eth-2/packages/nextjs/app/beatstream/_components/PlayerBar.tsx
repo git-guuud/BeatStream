@@ -1,10 +1,23 @@
 "use client";
 
-import React from "react";
-import { Track, formatDuration } from "./mockData";
+// Track interface for the player (works with both mock and API data)
+interface DisplayTrack {
+  id: string;
+  title: string;
+  artistId: string;
+  artistName: string;
+  duration: number;
+  coverUrl: string;
+}
+
+function formatDuration(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
 
 interface PlayerBarProps {
-  currentTrack: Track | null;
+  currentTrack: DisplayTrack | null;
   isPlaying: boolean;
   currentTime: number;
   onPlayPause: () => void;
@@ -132,8 +145,8 @@ export function PlayerBar({
 
         {/* Beats Counter (Demo) */}
         <div className="w-48 text-right">
-          <div className="text-sm text-base-content/60">Beats Used</div>
-          <div className="font-bold text-primary">{currentTime} 🎵</div>
+          <div className="text-sm text-base-content/60">Beats Balance</div>
+          <div className="font-bold text-accent">{currentTime} 🎵</div>
         </div>
       </div>
     </div>

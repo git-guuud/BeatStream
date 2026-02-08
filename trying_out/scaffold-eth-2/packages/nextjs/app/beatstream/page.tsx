@@ -2,29 +2,117 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PlayerBar } from "./_components/PlayerBar";
-import { mockArtists, mockTracks, getTracksByArtist, formatDuration, Track, Artist } from "./_components/mockData";
+import { 
+  fetchArtists, 
+  fetchTracks, 
+  formatDuration, 
+  getAvatarEmoji,
+  type Artist, 
+  type Track 
+} from "./_components/api";
+import { mockArtists, mockTracks } from "./_components/mockData";
+
+// Adapter to convert API Artist to display format
+interface DisplayArtist {
+  id: string;
+  name: string;
+  avatar: string;
+  genre: string;
+}
+
+// Adapter to convert API Track to display format
+interface DisplayTrack {
+  id: string;
+  title: string;
+  artistId: string;
+  artistName: string;
+  duration: number;
+  coverUrl: string;
+}
+
+function toDisplayArtist(artist: Artist): DisplayArtist {
+  return {
+    id: artist.id,
+    name: artist.display_name,
+    avatar: artist.avatar_url || getAvatarEmoji(artist.display_name),
+    genre: artist.ens_name.replace(".beatstream.eth", ""),
+  };
+}
+
+function toDisplayTrack(track: Track, artists: Artist[]): DisplayTrack {
+  const artist = artists.find(a => a.id === track.artist_id);
+  return {
+    id: track.id,
+    title: track.title,
+    artistId: track.artist_id,
+    artistName: artist?.display_name || "Unknown Artist",
+    duration: track.duration_seconds,
+    coverUrl: track.cover_url || "🎵",
+  };
+}
 
 export default function BeatStreamPage() {
-  const [selectedArtist, setSelectedArtist] = useState<Artist | null>(mockArtists[0]);
-  const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
+  const [artists, setArtists] = useState<DisplayArtist[]>(mockArtists);
+  const [allTracks, setAllTracks] = useState<DisplayTrack[]>(mockTracks);
+  const [selectedArtist, setSelectedArtist] = useState<DisplayArtist | null>(null);
+  const [currentTrack, setCurrentTrack] = useState<DisplayTrack | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [useApi, setUseApi] = useState(false);
   const shouldAutoAdvance = useRef(false);
 
-  const artistTracks = selectedArtist ? getTracksByArtist(selectedArtist.id) : [];
+  // Fetch data from API on mount
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [apiArtists, apiTracks] = await Promise.all([
+          fetchArtists(),
+          fetchTracks(),
+        ]);
+        
+        if (apiArtists.length > 0) {
+          const displayArtists = apiArtists.map(toDisplayArtist);
+          const displayTracks = apiTracks.map(t => toDisplayTrack(t, apiArtists));
+          setArtists(displayArtists);
+          setAllTracks(displayTracks);
+          setSelectedArtist(displayArtists[0]);
+          setUseApi(true);
+          console.log("✅ Connected to BeatStream API");
+        } else {
+          // Use mock data if no artists in DB
+          setSelectedArtist(mockArtists[0]);
+          console.log("ℹ️ Using mock data (no artists in DB)");
+        }
+      } catch (err) {
+        // Fallback to mock data if API fails
+        console.log("ℹ️ Using mock data (API unavailable)");
+        setSelectedArtist(mockArtists[0]);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadData();
+  }, []);
+
+  const artistTracks = selectedArtist 
+    ? allTracks.filter(t => t.artistId === selectedArtist.id) 
+    : [];
 
   // Auto-advance to next track when needed
   useEffect(() => {
     if (shouldAutoAdvance.current && currentTrack) {
       shouldAutoAdvance.current = false;
-      const currentIndex = mockTracks.findIndex(t => t.id === currentTrack.id);
-      const nextTrack = mockTracks[(currentIndex + 1) % mockTracks.length];
-      setCurrentTrack(nextTrack);
-      setCurrentTime(0);
-      const nextArtist = mockArtists.find(a => a.id === nextTrack.artistId);
-      if (nextArtist) setSelectedArtist(nextArtist);
+      const currentIndex = allTracks.findIndex(t => t.id === currentTrack.id);
+      const nextTrack = allTracks[(currentIndex + 1) % allTracks.length];
+      if (nextTrack) {
+        setCurrentTrack(nextTrack);
+        setCurrentTime(0);
+        const nextArtist = artists.find(a => a.id === nextTrack.artistId);
+        if (nextArtist) setSelectedArtist(nextArtist);
+      }
     }
-  }, [currentTime, currentTrack]);
+  }, [currentTime, currentTrack, allTracks, artists]);
 
   // Simulate playback timer
   useEffect(() => {
@@ -57,42 +145,48 @@ export default function BeatStreamPage() {
   }, [currentTrack, artistTracks]);
 
   const handleNext = useCallback(() => {
-    if (!currentTrack) return;
+    if (!currentTrack || allTracks.length === 0) return;
     
-    const allTracks = mockTracks;
     const currentIndex = allTracks.findIndex(t => t.id === currentTrack.id);
     const nextTrack = allTracks[(currentIndex + 1) % allTracks.length];
     setCurrentTrack(nextTrack);
     setCurrentTime(0);
     
     // Also select the artist of the next track
-    const nextArtist = mockArtists.find(a => a.id === nextTrack.artistId);
+    const nextArtist = artists.find(a => a.id === nextTrack.artistId);
     if (nextArtist) setSelectedArtist(nextArtist);
-  }, [currentTrack]);
+  }, [currentTrack, allTracks, artists]);
 
   const handlePrevious = useCallback(() => {
-    if (!currentTrack) return;
+    if (!currentTrack || allTracks.length === 0) return;
     
-    const allTracks = mockTracks;
     const currentIndex = allTracks.findIndex(t => t.id === currentTrack.id);
     const prevTrack = allTracks[(currentIndex - 1 + allTracks.length) % allTracks.length];
     setCurrentTrack(prevTrack);
     setCurrentTime(0);
     
     // Also select the artist of the previous track
-    const prevArtist = mockArtists.find(a => a.id === prevTrack.artistId);
+    const prevArtist = artists.find(a => a.id === prevTrack.artistId);
     if (prevArtist) setSelectedArtist(prevArtist);
-  }, [currentTrack]);
+  }, [currentTrack, allTracks, artists]);
 
-  const handleTrackSelect = (track: Track) => {
+  const handleTrackSelect = (track: DisplayTrack) => {
     setCurrentTrack(track);
     setCurrentTime(0);
     setIsPlaying(true);
   };
 
-  const handleArtistSelect = (artist: Artist) => {
+  const handleArtistSelect = (artist: DisplayArtist) => {
     setSelectedArtist(artist);
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="text-xl">Loading BeatStream...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen pb-24">
@@ -103,10 +197,10 @@ export default function BeatStreamPage() {
             🎵 BeatStream
           </h2>
           <h3 className="text-sm font-semibold text-base-content/60 uppercase tracking-wider mb-3">
-            Artists
+            Artists {useApi && <span className="text-xs text-success">(Live)</span>}
           </h3>
           <ul className="space-y-1">
-            {mockArtists.map(artist => (
+            {artists.map(artist => (
               <li key={artist.id}>
                 <button
                   onClick={() => handleArtistSelect(artist)}
