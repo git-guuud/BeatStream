@@ -12,6 +12,7 @@ import {
   getArtist,
   getArtistByWallet,
   createArtist,
+  updateArtist,
 } from "../db/supabase.js";
 import { generateArtistENS, isValidBeatStreamENS } from "../services/ens.js";
 import { verifySig, buildAuthMessage } from "../lib/verify.js";
@@ -20,11 +21,11 @@ const router = Router();
 
 /**
  * POST /api/artists/register
- * Body: { wallet, displayName, signature, nonce }
+ * Body: { wallet, displayName, bio?, genre?, signature, nonce }
  */
 router.post("/register", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { wallet, displayName, signature, nonce } = req.body;
+    const { wallet, displayName, bio, genre, signature, nonce } = req.body;
 
     if (!wallet || !displayName || !signature || nonce === undefined) {
       res.status(400).json({ error: "Missing required fields: wallet, displayName, signature, nonce" });
@@ -55,8 +56,16 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
     // Create artist record
     const artist = await createArtist(wallet, displayName, ensName);
 
-    console.log(`🎵 New artist registered: ${displayName} → ${ensName}`);
-    res.status(201).json({ artist, ensName });
+    // Update optional fields if provided
+    if (bio || genre) {
+      const updates: { bio?: string; genre?: string } = {};
+      if (bio) updates.bio = bio;
+      if (genre) updates.genre = genre;
+      await updateArtist(artist.id, updates);
+    }
+
+    console.log(`🎵 New artist registered: ${displayName} → ${ensName}${genre ? ` [${genre}]` : ""}`);
+    res.status(201).json({ artist: { ...artist, bio, genre }, ensName });
   } catch (err) {
     console.error("Artist registration error:", err);
     res.status(500).json({ error: "Registration failed" });

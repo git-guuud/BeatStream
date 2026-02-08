@@ -1,91 +1,210 @@
-# 🏗 Scaffold-ETH 2
+# 🎵 BeatStream
 
-<h4 align="center">
-  <a href="https://docs.scaffoldeth.io">Documentation</a> |
-  <a href="https://scaffoldeth.io">Website</a>
-</h4>
+**Pay-per-second music streaming powered by Web3** — built on [Scaffold-ETH 2](https://scaffoldeth.io).
 
-🧪 An open-source, up-to-date toolkit for building decentralized applications (dapps) on the Ethereum blockchain. It's designed to make it easier for developers to create and deploy smart contracts and build user interfaces that interact with those contracts.
+Stream music, pay by the second using on-chain Beats (1000 Beats = 1 USDC), and earn ENS subdomains as a loyal fan.
 
-> [!NOTE]
-> 🤖 Scaffold-ETH 2 is AI-ready! It has everything agents need to build on Ethereum. Check `.agents/`, `.claude/`, `.opencode` or `.cursor/` for more info.
+> 🏆 Hackathon submission targeting **Yellow Network** ($15k), **Circle Arc** ($10k), and **ENS** ($5k) bounties.
 
-⚙️ Built using NextJS, RainbowKit, Foundry/Hardhat, Wagmi, Viem, and Typescript.
+---
 
-- ✅ **Contract Hot Reload**: Your frontend auto-adapts to your smart contract as you edit it.
-- 🪝 **[Custom hooks](https://docs.scaffoldeth.io/hooks/)**: Collection of React hooks wrapper around [wagmi](https://wagmi.sh/) to simplify interactions with smart contracts with typescript autocompletion.
-- 🧱 [**Components**](https://docs.scaffoldeth.io/components/): Collection of common web3 components to quickly build your frontend.
-- 🔥 **Burner Wallet & Local Faucet**: Quickly test your application with a burner wallet and local faucet.
-- 🔐 **Integration with Wallet Providers**: Connect to different wallet providers and interact with the Ethereum network.
-
-![Debug Contracts tab](https://github.com/scaffold-eth/scaffold-eth-2/assets/55535804/b237af0c-5027-4849-a5c1-2e31495cccb1)
-
-## Requirements
-
-Before you begin, you need to install the following tools:
-
-- [Node (>= v20.18.3)](https://nodejs.org/en/download/)
-- Yarn ([v1](https://classic.yarnpkg.com/en/docs/install/) or [v2+](https://yarnpkg.com/getting-started/install))
-- [Git](https://git-scm.com/downloads)
-
-## Quickstart
-
-To get started with Scaffold-ETH 2, follow the steps below:
-
-1. Install the latest version of Scaffold-ETH 2
+## 🏗️ Architecture
 
 ```
-npx create-eth@latest
+┌─────────────────────────────────────────────────────────────┐
+│                     BeatStream Stack                         │
+├─────────────┬──────────────────┬────────────────────────────┤
+│  Frontend   │     Backend      │        On-Chain            │
+│  (Next.js)  │  (Express + WS)  │  (Solidity + ENS)         │
+├─────────────┼──────────────────┼────────────────────────────┤
+│ Wallet      │ REST API         │ BeatStreamVault.sol        │
+│ Connect     │ WebSocket        │ MockUSDC.sol               │
+│ ENS Display │ Supabase DB      │ ENS NameWrapper (Sepolia)  │
+│ Player UI   │ Audio Storage    │                            │
+├─────────────┴──────────────────┴────────────────────────────┤
+│           Yellow Network          │      Circle Arc          │
+│  (State channels via Nitrolite)   │  (Settlement + Wallets)  │
+└───────────────────────────────────┴──────────────────────────┘
 ```
 
-This command will install all the necessary packages and dependencies, so it might take a while.
+| Component | Tech | Status |
+|-----------|------|--------|
+| Smart Contracts | Solidity / Hardhat | ✅ Complete |
+| Backend Server | Express + WebSocket + Supabase | ✅ Complete (0 TS errors) |
+| Yellow Network | `@erc7824/nitrolite` — ClearNode state channels | ✅ Connected |
+| Circle Arc | Smart Contract Platform + Dev Wallets | ✅ Integrated |
+| ENS | On-chain subdomains via NameWrapper (Sepolia) | ✅ Complete |
+| Frontend | Next.js (Scaffold-ETH 2) | 🔲 In progress |
 
-> [!NOTE]
-> You can also initialize your project with one of our extensions to add specific features or starter-kits. Learn more in our [extensions documentation](https://docs.scaffoldeth.io/extensions/).
+---
 
-2. Run a local network in the first terminal:
+## 🚀 Quick Start
 
+### Prerequisites
+- Node.js ≥ v20
+- Yarn v1 or v2+
+- Git
+
+### 1. Install Dependencies
+
+```bash
+git clone https://github.com/IMPERIAL-X7/BeatStream.git
+cd BeatStream/trying_out/scaffold-eth-2
+yarn install
 ```
+
+### 2. Set Up Environment
+
+```bash
+cp packages/server/.env.example packages/server/.env
+# Fill in your API keys (Yellow, Circle, Alchemy, Supabase)
+```
+
+### 3. Deploy Contracts (Local)
+
+```bash
+# Terminal 1 — Start local chain
 yarn chain
-```
 
-This command starts a local Ethereum network that runs on your local machine and can be used for testing and development. Learn how to [customize your network configuration](https://docs.scaffoldeth.io/quick-start/environment#1-initialize-a-local-blockchain).
-
-3. On a second terminal, deploy the test contract:
-
-```
+# Terminal 2 — Deploy
 yarn deploy
 ```
 
-This command deploys a test smart contract to the local network. You can find more information about how to customize your contract and deployment script in our [documentation](https://docs.scaffoldeth.io/quick-start/environment#2-deploy-your-smart-contract).
+### 4. Start Backend Server
 
-4. On a third terminal, start your NextJS app:
-
+```bash
+# Terminal 3
+cd packages/server
+npx tsx src/index.ts
+# Server starts on http://localhost:4000
 ```
+
+### 5. Start Frontend
+
+```bash
+# Terminal 4
 yarn start
+# Frontend on http://localhost:3000
 ```
 
-Visit your app on: `http://localhost:3000`. You can interact with your smart contract using the `Debug Contracts` page. You can tweak the app config in `packages/nextjs/scaffold.config.ts`.
+---
 
-**What's next**:
+## 💰 How It Works
 
-Visit the [What's next section of our docs](https://docs.scaffoldeth.io/quick-start/environment#whats-next) to learn how to:
+```
+1. USER deposits USDC → gets Beats (1000 Beats = 1 USDC)
+2. USER starts streaming a track → opens Yellow Network state channel
+3. Every second: 1 Beat deducted → state channel updated in real-time
+4. USER stops → session settles via Circle Arc → artist gets paid
+5. After 100+ Beats streamed from one artist → fan earns ENS subdomain!
+```
 
-- Edit your smart contracts
-- Edit your deployment scripts
-- Customize your frontend
-- Edit the app config
-- Writing and running tests
-- [Setting up external services and API keys](https://docs.scaffoldeth.io/deploying/deploy-smart-contracts#configuration-of-third-party-services-for-production-grade-apps)
+### Currency
 
-## Documentation
+| Unit | Value | Usage |
+|------|-------|-------|
+| 1 USDC | 1,000 Beats | Deposit conversion |
+| 1 Beat | $0.001 | 1 second of streaming |
+| 100 Beats | — | Fan subdomain threshold |
 
-Visit our [docs](https://docs.scaffoldeth.io) to learn all the technical details and guides of Scaffold-ETH 2.
+### ENS Subdomains
 
-To know more about its features, check out our [website](https://scaffoldeth.io).
+- **Artists** get `<name>.beatstream.eth` (e.g., `synthwave.beatstream.eth`)
+- **Fans** earn `fan-<wallet>.artist.beatstream.eth` after streaming 100+ seconds
 
-## Contributing to Scaffold-ETH 2
+---
 
-We welcome contributions to Scaffold-ETH 2!
+## 📡 API Endpoints
 
-Please see [CONTRIBUTING.MD](https://github.com/scaffold-eth/scaffold-eth-2/blob/main/CONTRIBUTING.md) for more information and guidelines for contributing to Scaffold-ETH 2.
+| Route | Methods | Description |
+|-------|---------|-------------|
+| `/api/health` | GET | Health check |
+| `/api/status` | GET | Service statuses (Yellow, Circle, ENS) |
+| `/api/users` | POST `/register`, GET `/:wallet` | User auth (wallet signature) |
+| `/api/artists` | POST `/register`, GET `/`, GET `/:id` | Artist registration + ENS |
+| `/api/tracks` | POST `/`, GET `/`, GET `/:id`, POST `/:id/audio` | Track management + audio upload |
+| `/api/deposit` | POST `/`, POST `/verify` | USDC deposit → Beats |
+| `/api/sessions` | POST `/start`, POST `/settle`, GET `/:id` | Stream session lifecycle |
+| `/api/ens` | POST `/register-artist`, POST `/mint-fan-subdomain`, GET `/resolve/:name`, GET `/check/:name`, GET `/fan-subdomains/:wallet` | On-chain ENS operations |
+| `/ws/stream` | WebSocket | Real-time beat-by-beat streaming |
+
+---
+
+## 🔌 Integrations
+
+### Yellow Network ($15k Prize)
+- **`@erc7824/nitrolite`** SDK for state channels via ClearNode
+- EIP-712 auth, app sessions, real-time state updates (1 beat/sec)
+- Instant off-chain payments — no gas per stream second
+
+### Circle Arc ($10k Prize)
+- **Smart Contract Platform** for vault deployment + settlement
+- **Developer Controlled Wallets** for server-side operations
+- On-chain `settle()` converts Beats → USDC for artists
+
+### ENS ($5k Prize)
+- **NameWrapper** integration on Sepolia via viem
+- Artist subdomains: `registerArtistSubdomain()` → on-chain
+- Fan loyalty subdomains: `mintFanSubdomain()` → on-chain
+- Text records: avatar, url, description
+- Graceful simulation fallback for demo environments
+
+---
+
+## 📁 Project Structure
+
+```
+packages/
+├── hardhat/                    # Smart contracts
+│   ├── contracts/
+│   │   ├── BeatStreamVault.sol # Core vault (deposit/settle/withdraw)
+│   │   └── MockUSDC.sol        # Test USDC token
+│   └── deploy/
+│       └── 01_deploy_beatstream.ts
+│
+├── server/                     # Backend
+│   └── src/
+│       ├── index.ts            # Entry point (Express + WS)
+│       ├── config/             # Constants + TypeScript types
+│       ├── db/                 # Supabase client + schema + migrations
+│       ├── lib/                # Signature verification
+│       ├── routes/             # REST routes + WebSocket handler
+│       │   ├── artists.ts
+│       │   ├── tracks.ts
+│       │   ├── sessions.ts
+│       │   ├── ens.ts          # ENS on-chain routes
+│       │   ├── deposit.ts
+│       │   ├── users.ts
+│       │   └── stream.ws.ts    # WebSocket streaming
+│       └── services/           # SDK integrations
+│           ├── yellow.ts       # Yellow Network (Nitrolite)
+│           ├── arc.ts          # Circle Arc
+│           └── ens.ts          # ENS (viem + NameWrapper)
+│
+└── nextjs/                     # Frontend (Scaffold-ETH 2)
+    └── app/beatstream/         # BeatStream pages (WIP)
+```
+
+---
+
+## 📖 Documentation
+
+- **[README_DONE.md](./README_DONE.md)** — Detailed technical breakdown of everything built
+- **[README_TODO.md](./README_TODO.md)** — Remaining tasks and build order
+
+---
+
+## 🛠️ Built With
+
+- [Scaffold-ETH 2](https://scaffoldeth.io) — Ethereum development stack
+- [Yellow Network / Nitrolite](https://yellow.org) — State channel infrastructure
+- [Circle Arc](https://developers.circle.com) — Smart contract platform
+- [ENS](https://ens.domains) — Ethereum Name Service
+- [Supabase](https://supabase.com) — PostgreSQL + Storage
+- [viem](https://viem.sh) — TypeScript Ethereum client
+
+---
+
+## 📜 License
+
+This project is licensed under the MIT License.

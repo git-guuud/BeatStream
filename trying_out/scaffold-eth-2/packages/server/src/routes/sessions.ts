@@ -13,12 +13,17 @@ import {
   getSession,
   settleSession,
   creditArtistEarnings,
+  recordStream,
+  incrementPlayCount,
+  incrementArtistStreams,
+  getFanArtistBeats,
+  getFanSubdomain,
 } from "../db/supabase.js";
 import { verifySig, buildAuthMessage } from "../lib/verify.js";
 import { openStreamSession, closeStreamSession } from "../services/yellow.js";
 import { settlePayment } from "../services/arc.js";
 import { checkFanSubdomainEligibility, generateFanSubdomain } from "../services/ens.js";
-import { BEATS_PER_USDC } from "../config/constants.js";
+import { BEATS_PER_USDC, FAN_SUBDOMAIN_THRESHOLD } from "../config/constants.js";
 
 const router = Router();
 
@@ -163,10 +168,59 @@ router.post("/settle", async (req: Request, res: Response): Promise<void> => {
     // 3. Mark session as settled in DB
     const settled = await settleSession(sessionId);
 
-    // 4. Check fan subdomain eligibility (ENS integration)
+    // 4. Record stream history + increment counters
+    const track = await getTrack(session.track_id);
+    if (artist && track && totalBeats > 0) {
+      try {
+        await recordStream({
+          wallet,
+          artistId: session.artist_id,
+          trackId: session.track_id,
+          sessionId,
+          beats: totalBeats,
+          duration: totalBeats, // 1 beat = 1 second
+        });
+        await incrementPlayCount(session.track_id);
+        await incrementArtistStreams(session.artist_id);
+      } catch (historyErr) {
+        // Non-fatal — don't fail the settlement if history recording fails
+        console.warn("⚠️  Stream history recording failed:", historyErr);
+      }
+    }
+
+    // 5. Check fan subdomain eligibility (ENS integration)
     let fanSubdomain = null;
-    if (artist && checkFanSubdomainEligibility(totalBeats)) {
-      fanSubdomain = generateFanSubdomain(wallet, artist.ens_name);
+    let fanSubdomainEligible = false;
+    if (artist) {
+      const totalFanBeats = await getFanArtistBeats(wallet, session.artist_id);
+      fanSubdomainEligible = checkFanSubdomainEligibility(totalFanBeats);
+
+      // Check if they already have a subdomain
+      const existingSub = await getFanSubdomain(wallet, session.artist_id);
+
+      if (fanSubdomainEligible && !existingSub) {
+        fanSubdomain = {
+          name: generateFanSubdomain(wallet, artist.ens_name),
+          eligible: true,
+          totalBeatsFromArtist: totalFanBeats,
+          threshold: FAN_SUBDOMAIN_THRESHOLD,
+          hint: "Call POST /api/ens/mint-fan-subdomain to claim!",
+        };
+      } else if (existingSub) {
+        fanSubdomain = {
+          name: existingSub.subdomain,
+          eligible: true,
+          alreadyClaimed: true,
+          totalBeatsFromArtist: totalFanBeats,
+        };
+      } else {
+        fanSubdomain = {
+          name: generateFanSubdomain(wallet, artist.ens_name),
+          eligible: false,
+          totalBeatsFromArtist: totalFanBeats,
+          remaining: FAN_SUBDOMAIN_THRESHOLD - totalFanBeats,
+        };
+      }
     }
 
     console.log(

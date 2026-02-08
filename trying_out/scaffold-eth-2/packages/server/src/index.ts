@@ -21,6 +21,7 @@ import userRoutes from "./routes/users.js";
 import depositRoutes from "./routes/deposit.js";
 import trackRoutes from "./routes/tracks.js";
 import sessionRoutes from "./routes/sessions.js";
+import ensRoutes from "./routes/ens.js";
 
 // WebSocket
 import { initWebSocketServer } from "./routes/stream.ws.js";
@@ -57,6 +58,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/deposit", depositRoutes);
 app.use("/api/tracks", trackRoutes);
 app.use("/api/sessions", sessionRoutes);
+app.use("/api/ens", ensRoutes);
 
 // ── Status route ──────────────────────────────
 

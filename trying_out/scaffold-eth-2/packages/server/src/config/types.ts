@@ -19,7 +19,11 @@ export interface Artist {
   ens_name: string;          // e.g. "synthwave.beatstream.eth"
   display_name: string;
   avatar_url: string | null;
+  bio: string | null;
+  genre: string | null;
   usdc_earned: number;
+  total_streams: number;
+  ens_registered: boolean;
   created_at: string;
 }
 
@@ -30,6 +34,9 @@ export interface Track {
   duration_seconds: number;
   chunks: number;
   cover_url: string | null;
+  audio_url: string | null;
+  genre: string | null;
+  play_count: number;
   is_private: boolean;
   created_at: string;
 }
@@ -43,6 +50,27 @@ export interface Session {
   total_beats_paid: number;
   last_signature: string | null;
   status: SessionStatus;
+}
+
+export interface FanSubdomain {
+  id: string;
+  fan_wallet: string;
+  artist_id: string;
+  subdomain: string;
+  total_beats_streamed: number;
+  tx_hash: string | null;
+  minted_at: string;
+}
+
+export interface StreamHistory {
+  id: string;
+  user_wallet: string;
+  artist_id: string;
+  track_id: string;
+  session_id: string | null;
+  beats_paid: number;
+  duration_seconds: number;
+  settled_at: string;
 }
 
 // ─── API Request / Response ───
