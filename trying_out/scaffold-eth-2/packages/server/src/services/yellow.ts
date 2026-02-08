@@ -11,9 +11,11 @@
 // ──────────────────────────────────────────────
 import {
   NitroliteClient,
-  NitroliteRPC,
+  WalletStateSigner,
   createAuthRequestMessage,
-  createAuthVerifyMessageFromChallenge,
+  createAuthVerifyMessage,
+  parseAuthChallengeResponse,
+  parseAnyRPCResponse,
   createECDSAMessageSigner,
   createEIP712AuthMessageSigner,
   createAppSessionMessage,
@@ -23,9 +25,11 @@ import {
   createCloseChannelMessage,
   createPingMessage,
   type MessageSigner,
-  type AppDefinition,
+  type AuthRequestParams,
+  type RPCAppDefinition,
   RPCMethod,
   RPCChannelStatus,
+  RPCProtocolVersion,
 } from "@erc7824/nitrolite";
 import {
   createWalletClient,
@@ -100,10 +104,10 @@ export async function initYellow(): Promise<void> {
   nitroClient = new NitroliteClient({
     publicClient,
     walletClient,
+    stateSigner: new WalletStateSigner(walletClient),
     addresses: {
       custody: YELLOW_CONTRACTS.custody as Address,
       adjudicator: YELLOW_CONTRACTS.adjudicator as Address,
-      guestAddress: serverAccount.address as Address,
     },
     chainId: YELLOW_CHAIN_ID,
     challengeDuration: BigInt(3600),
@@ -163,46 +167,54 @@ function connectToClearNode(): Promise<void> {
 
 // ── Authentication (EIP-712 Challenge-Response) ─
 
+// Store auth params so we can reuse them for the EIP-712 signer
+let authParams: AuthRequestParams | null = null;
+
 async function startAuth(): Promise<void> {
   if (!ws || !serverAccount || !sessionAccount) return;
 
-  const authReqMsg = await createAuthRequestMessage({
-    wallet: serverAccount.address,
-    participant: serverAccount.address,
-    app_name: BEATSTREAM_APP_NAME,
-    allowances: [
-      { asset: YELLOW_TEST_TOKEN_ASSET, amount: "1000000000" },
-    ],
-    expire: String(Math.floor(Date.now() / 1000) + 86400),
-    scope: "beatstream.app",
-    application: serverAccount.address,
-  });
+  // Field names MUST match the SDK's AuthRequestParams exactly:
+  //   address, session_key, application, allowances, expires_at, scope
+  authParams = {
+    address: serverAccount.address,
+    session_key: sessionAccount.address,
+    application: BEATSTREAM_APP_NAME,
+    allowances: [],
+    expires_at: BigInt(Math.floor(Date.now() / 1000) + 86400),
+    scope: "console",
+  };
+
+  const authReqMsg = await createAuthRequestMessage(authParams);
 
   ws.send(authReqMsg);
   console.log("🟡 Yellow: Auth request sent, waiting for challenge...");
 }
 
-async function handleAuthChallenge(challenge: string): Promise<void> {
-  if (!ws || !walletClient || !serverAccount) return;
+async function handleAuthChallenge(rawChallengeMessage: string): Promise<void> {
+  if (!ws || !walletClient || !serverAccount || !authParams) return;
 
   try {
+    // Parse the raw auth_challenge response using the SDK helper
+    const parsedChallenge = parseAuthChallengeResponse(rawChallengeMessage);
+    console.log("🟡 Yellow: Parsed challenge →", parsedChallenge.params.challengeMessage);
+
+    // EIP-712 signer must match the auth request params exactly
     const eip712Signer = createEIP712AuthMessageSigner(
       walletClient,
       {
-        scope: "beatstream.app",
-        application: serverAccount.address,
-        participant: serverAccount.address,
-        expire: String(Math.floor(Date.now() / 1000) + 86400),
-        allowances: [
-          { asset: YELLOW_TEST_TOKEN_ASSET, amount: "1000000000" },
-        ],
+        scope: authParams.scope,
+        session_key: authParams.session_key,
+        expires_at: authParams.expires_at,
+        allowances: authParams.allowances,
       },
-      { name: BEATSTREAM_APP_NAME }
+      { name: authParams.application }
     );
 
-    const verifyMsg = await createAuthVerifyMessageFromChallenge(
+    // Use createAuthVerifyMessage (the official working approach)
+    // NOTE: createAuthVerifyMessageFromChallenge has known issues in the SDK
+    const verifyMsg = await createAuthVerifyMessage(
       eip712Signer,
-      challenge
+      parsedChallenge
     );
     ws.send(verifyMsg);
     console.log("🟡 Yellow: Auth verify message sent");
@@ -215,18 +227,45 @@ async function handleAuthChallenge(challenge: string): Promise<void> {
 
 function handleClearNodeMessage(raw: string): void {
   try {
-    const parsed = NitroliteRPC.parseResponse(raw);
+    // First, try to detect the method from the raw JSON to handle auth_challenge
+    // with the SDK's parseAuthChallengeResponse (the official working path)
+    let rawJson: { res?: unknown[] };
+    try {
+      rawJson = JSON.parse(raw);
+    } catch {
+      console.error("🟡 Yellow: Failed to parse raw JSON");
+      return;
+    }
 
-    if (!parsed.isValid) return;
+    // Detect method from res[1] (standard RPC format: [id, method, params, ts])
+    const resArray = rawJson.res;
+    const method = resArray?.[1] as string | undefined;
+
+    // Auth challenge: use the SDK's parseAuthChallengeResponse + createAuthVerifyMessage
+    // This is the official working approach (createAuthVerifyMessageFromChallenge has known bugs)
+    if (method === "auth_challenge") {
+      console.log("🟡 Yellow: Auth challenge received");
+      handleAuthChallenge(raw);
+      return;
+    }
+
+    // For all other messages, use parseAnyRPCResponse (replaces NitroliteRPC.parseResponse in v0.5.x)
+    let parsed;
+    try {
+      parsed = parseAnyRPCResponse(raw);
+    } catch {
+      console.warn("🟡 Yellow: Could not parse RPC response for method:", method);
+      return;
+    }
 
     // Handle errors
-    if (parsed.isError) {
-      const errData = parsed.data as { error?: string };
-      console.error(`🟡 Yellow RPC Error [${parsed.method}]:`, errData?.error ?? parsed.data);
+    if (parsed.method === RPCMethod.Error) {
+      const errParams = parsed.params as { error?: string };
+      console.error(`🟡 Yellow RPC Error:`, errParams?.error ?? parsed.params);
       if (parsed.requestId !== undefined) {
         const pending = pendingRequests.get(parsed.requestId);
         if (pending) {
-          pending.reject(new Error(errData?.error ?? "RPC Error"));
+          pending.reject(new Error(errParams?.error ?? "RPC Error"));
           pendingRequests.delete(parsed.requestId);
         }
       }
@@ -234,25 +273,21 @@ function handleClearNodeMessage(raw: string): void {
     }
 
     switch (parsed.method) {
-      case RPCMethod.AuthChallenge: {
-        const data = parsed.data as Record<string, unknown>[];
-        const challengeMsg = (data?.[0] as Record<string, string>)?.challenge_message ?? "";
-        console.log("🟡 Yellow: Auth challenge received");
-        handleAuthChallenge(challengeMsg);
-        break;
-      }
-
       case RPCMethod.AuthVerify: {
         authenticated = true;
-        console.log("🟡 Yellow: ✅ Authenticated with ClearNode!");
+        const verifyParams = parsed.params as { success?: boolean; jwtToken?: string };
+        if (verifyParams.jwtToken) {
+          console.log("🟡 Yellow: ✅ Authenticated with ClearNode! JWT received.");
+        } else {
+          console.log("🟡 Yellow: ✅ Authenticated with ClearNode!");
+        }
         break;
       }
 
       case RPCMethod.CreateAppSession: {
-        const data = parsed.data as Record<string, unknown>[];
-        const appSessionId = (data?.[0] as Record<string, Hex>)?.app_session_id;
-        console.log(`🟡 Yellow: App session created → ${appSessionId}`);
-        resolvePending(parsed.requestId, { appSessionId });
+        const sessionParams = parsed.params as { appSessionId?: Hex };
+        console.log(`🟡 Yellow: App session created → ${sessionParams.appSessionId}`);
+        resolvePending(parsed.requestId, sessionParams);
         break;
       }
 
@@ -272,11 +307,11 @@ function handleClearNodeMessage(raw: string): void {
         break;
 
       case RPCMethod.BalanceUpdate:
-        console.log("🟡 Yellow: Balance update", parsed.data);
+        console.log("🟡 Yellow: Balance update", parsed.params);
         break;
 
       default:
-        resolvePending(parsed.requestId, parsed.data);
+        resolvePending(parsed.requestId, parsed.params);
     }
   } catch {
     // Non-parseable message
@@ -328,8 +363,9 @@ export async function openStreamSession(
   try {
     const requestId = Date.now();
 
-    const appDef: AppDefinition = {
-      protocol: "beatstream-v1",
+    const appDef: RPCAppDefinition = {
+      application: BEATSTREAM_APP_NAME,
+      protocol: RPCProtocolVersion.NitroRPC_0_2,
       participants: [userAddress as Hex, serverAccount.address],
       weights: [100, 0],
       quorum: 100,
@@ -352,7 +388,7 @@ export async function openStreamSession(
 
     const msg = await createAppSessionMessage(
       sessionSigner,
-      [{ definition: appDef, allocations }],
+      { definition: appDef, allocations },
       requestId
     );
 
@@ -400,7 +436,7 @@ export async function updateStreamState(
 
     const msg = await createSubmitAppStateMessage(
       sessionSigner,
-      [{ app_session_id: appSessionId, allocations }],
+      { app_session_id: appSessionId, allocations },
       requestId
     );
 
@@ -448,7 +484,7 @@ export async function closeStreamSession(
 
     const msg = await createCloseAppSessionMessage(
       sessionSigner,
-      [{ app_session_id: appSessionId, allocations: finalAllocations }],
+      { app_session_id: appSessionId, allocations: finalAllocations },
       requestId
     );
 
