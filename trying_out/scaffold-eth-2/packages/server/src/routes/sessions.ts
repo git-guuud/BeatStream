@@ -161,7 +161,11 @@ router.post("/settle", async (req: Request, res: Response): Promise<void> => {
 
       // Credit artist earnings in DB
       if (settlement.success) {
+        console.log(`💵 Crediting ${usdcAmount} USDC to artist ${artist.display_name} (${session.artist_id})`);
         await creditArtistEarnings(session.artist_id, usdcAmount);
+        console.log(`✅ Artist earnings updated: +${usdcAmount} USDC`);
+      } else {
+        console.warn(`⚠️  Settlement failed, not crediting artist earnings`);
       }
     }
 

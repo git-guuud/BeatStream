@@ -200,14 +200,50 @@ export async function creditArtistEarnings(artistId: string, usdc: number): Prom
     const artist = mockArtists.get(artistId);
     if (artist) {
       artist.usdc_earned += usdc;
+      console.log(`💵 Mock: Credited ${usdc} USDC to artist ${artistId} (new total: ${artist.usdc_earned})`);
     }
     return;
   }
-  const { error } = await supabase!.rpc("credit_artist_earnings", {
-    p_artist_id: artistId,
-    p_usdc: usdc,
-  });
-  if (error) throw error;
+  
+  // Try the RPC function first (if it exists)
+  try {
+    const { error } = await supabase!.rpc("credit_artist_earnings", {
+      p_artist_id: artistId,
+      p_usdc: usdc,
+    });
+    if (!error) {
+      console.log(`💵 DB: Credited ${usdc} USDC to artist ${artistId} via RPC`);
+      return;
+    }
+    console.warn(`⚠️  RPC credit_artist_earnings failed:`, error.message);
+  } catch (rpcErr) {
+    console.warn(`⚠️  RPC credit_artist_earnings not available, using direct update`);
+  }
+  
+  // Fallback: direct column update with increment
+  const { data: artist, error: fetchErr } = await supabase!
+    .from("artists")
+    .select("usdc_earned")
+    .eq("id", artistId)
+    .single();
+    
+  if (fetchErr) {
+    console.error(`❌ Failed to fetch artist ${artistId}:`, fetchErr);
+    throw fetchErr;
+  }
+  
+  const newTotal = (artist?.usdc_earned ?? 0) + usdc;
+  const { error: updateErr } = await supabase!
+    .from("artists")
+    .update({ usdc_earned: newTotal })
+    .eq("id", artistId);
+    
+  if (updateErr) {
+    console.error(`❌ Failed to update artist earnings:`, updateErr);
+    throw updateErr;
+  }
+  
+  console.log(`💵 DB: Credited ${usdc} USDC to artist ${artistId} via direct update (new total: ${newTotal})`);
 }
 
 // ═══════════════════════════════════════════════
@@ -372,11 +408,43 @@ export async function incrementPlayCount(trackId: string): Promise<number> {
 }
 
 export async function incrementArtistStreams(artistId: string): Promise<number> {
-  const { data, error } = await supabase.rpc("increment_artist_streams", {
-    p_artist_id: artistId,
-  });
-  if (error) throw error;
-  return data as number;
+  if (useMockData) {
+    const artist = mockArtists.get(artistId);
+    if (artist) {
+      artist.total_streams += 1;
+      return artist.total_streams;
+    }
+    return 0;
+  }
+  
+  // Try RPC first
+  try {
+    const { data, error } = await supabase!.rpc("increment_artist_streams", {
+      p_artist_id: artistId,
+    });
+    if (!error) return data as number;
+    console.warn(`⚠️  RPC increment_artist_streams failed:`, error.message);
+  } catch {
+    console.warn(`⚠️  RPC increment_artist_streams not available, using direct update`);
+  }
+  
+  // Fallback: direct update
+  const { data: artist, error: fetchErr } = await supabase!
+    .from("artists")
+    .select("total_streams")
+    .eq("id", artistId)
+    .single();
+    
+  if (fetchErr) throw fetchErr;
+  
+  const newTotal = (artist?.total_streams ?? 0) + 1;
+  const { error: updateErr } = await supabase!
+    .from("artists")
+    .update({ total_streams: newTotal })
+    .eq("id", artistId);
+    
+  if (updateErr) throw updateErr;
+  return newTotal;
 }
 
 export async function recordStream(params: {
