@@ -100,3 +100,93 @@ export function getAvatarEmoji(name: string): string {
   const index = name.charCodeAt(0) % emojis.length;
   return emojis[index];
 }
+
+// ═══════════════════════════════════════════════
+// ARTIST DASHBOARD APIs
+// ═══════════════════════════════════════════════
+
+// Fetch artist by wallet address
+export async function fetchArtistByWallet(wallet: string): Promise<Artist | null> {
+  const res = await fetch(`${API_BASE_URL}/api/artists/wallet/${wallet}`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.artist || null;
+}
+
+// Register as an artist
+export async function registerArtist(
+  wallet: string,
+  displayName: string,
+  signature: string,
+  nonce: number,
+  bio?: string,
+  genre?: string
+): Promise<{ artist: Artist; ensName: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/artists/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ wallet, displayName, bio, genre, signature, nonce }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Registration failed");
+  }
+  return res.json();
+}
+
+// Upload a new track
+export async function uploadTrack(
+  wallet: string,
+  title: string,
+  durationSeconds: number,
+  signature: string,
+  nonce: number,
+  genre?: string,
+  isPrivate?: boolean
+): Promise<Track> {
+  const res = await fetch(`${API_BASE_URL}/api/tracks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      wallet,
+      title,
+      durationSeconds,
+      isPrivate: isPrivate ?? false,
+      genre,
+      signature,
+      nonce,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Track upload failed");
+  }
+  const data = await res.json();
+  return data.track;
+}
+
+// Upload audio file for a track
+export async function uploadTrackAudio(
+  trackId: string,
+  wallet: string,
+  signature: string,
+  nonce: number,
+  audioFile: File
+): Promise<{ track: Track; audioUrl: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/tracks/${trackId}/audio`, {
+    method: "POST",
+    headers: {
+      "Content-Type": audioFile.type || "audio/mpeg",
+      "X-Wallet": wallet,
+      "X-Signature": signature,
+      "X-Nonce": nonce.toString(),
+      "X-Filename": audioFile.name,
+    },
+    body: audioFile,
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Audio upload failed");
+  }
+  return res.json();
+}

@@ -1,18 +1,25 @@
 // ──────────────────────────────────────────────
 // Supabase Client + DB Helpers
+// With in-memory fallback for demo/development
 // ──────────────────────────────────────────────
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type { User, Artist, Track, Session, UserRole, FanSubdomain, StreamHistory } from "../config/types.js";
 
-let supabase: SupabaseClient;
+let supabase: SupabaseClient | null = null;
+let useMockData = false;
+
+// In-memory mock storage for demo
+const mockArtists: Map<string, Artist> = new Map();
+const mockTracks: Map<string, Track> = new Map();
+const mockUsers: Map<string, User> = new Map();
 
 export function initSupabase() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!url || !key || url === "your_supabase_url" || key === "your_supabase_service_role_key") {
-    console.warn("⚠️  Supabase: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set. DB calls will fail.");
-    // Don't create a client — DB methods will throw helpful errors
+  if (!url || !key || url === "your_supabase_url" || key === "your_supabase_service_role_key" || url === "your_supabase_project_url") {
+    console.warn("⚠️  Supabase: Not configured. Using in-memory mock storage for demo.");
+    useMockData = true;
     return;
   }
 
@@ -24,12 +31,24 @@ export function getSupabase() {
   return supabase;
 }
 
+// Helper to generate UUID
+function generateId(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 // ═══════════════════════════════════════════════
 // USERS
 // ═══════════════════════════════════════════════
 
 export async function getUser(wallet: string): Promise<User | null> {
-  const { data, error } = await supabase
+  if (useMockData) {
+    return mockUsers.get(wallet.toLowerCase()) || null;
+  }
+  const { data, error } = await supabase!
     .from("users")
     .select("*")
     .eq("wallet_address", wallet.toLowerCase())
@@ -39,7 +58,18 @@ export async function getUser(wallet: string): Promise<User | null> {
 }
 
 export async function createUser(wallet: string, role: UserRole = "user", ensName?: string): Promise<User> {
-  const { data, error } = await supabase
+  if (useMockData) {
+    const user: User = {
+      wallet_address: wallet.toLowerCase(),
+      role,
+      beats_balance: 0,
+      ens_name: ensName ?? null,
+      created_at: new Date().toISOString(),
+    };
+    mockUsers.set(wallet.toLowerCase(), user);
+    return user;
+  }
+  const { data, error } = await supabase!
     .from("users")
     .upsert(
       {
@@ -56,7 +86,15 @@ export async function createUser(wallet: string, role: UserRole = "user", ensNam
 }
 
 export async function creditBeats(wallet: string, beats: number): Promise<number> {
-  const { data, error } = await supabase.rpc("credit_beats", {
+  if (useMockData) {
+    const user = mockUsers.get(wallet.toLowerCase());
+    if (user) {
+      user.beats_balance += beats;
+      return user.beats_balance;
+    }
+    return 0;
+  }
+  const { data, error } = await supabase!.rpc("credit_beats", {
     p_wallet: wallet.toLowerCase(),
     p_beats: beats,
   });
@@ -65,7 +103,15 @@ export async function creditBeats(wallet: string, beats: number): Promise<number
 }
 
 export async function debitBeat(wallet: string): Promise<number> {
-  const { data, error } = await supabase.rpc("debit_beat", {
+  if (useMockData) {
+    const user = mockUsers.get(wallet.toLowerCase());
+    if (user && user.beats_balance > 0) {
+      user.beats_balance -= 1;
+      return user.beats_balance;
+    }
+    return -1;
+  }
+  const { data, error } = await supabase!.rpc("debit_beat", {
     p_wallet: wallet.toLowerCase(),
   });
   if (error) throw error;
@@ -77,13 +123,19 @@ export async function debitBeat(wallet: string): Promise<number> {
 // ═══════════════════════════════════════════════
 
 export async function getArtists(): Promise<Artist[]> {
-  const { data, error } = await supabase.from("artists").select("*");
+  if (useMockData) {
+    return Array.from(mockArtists.values());
+  }
+  const { data, error } = await supabase!.from("artists").select("*");
   if (error) throw error;
   return data ?? [];
 }
 
 export async function getArtist(artistId: string): Promise<Artist | null> {
-  const { data, error } = await supabase
+  if (useMockData) {
+    return mockArtists.get(artistId) || null;
+  }
+  const { data, error } = await supabase!
     .from("artists")
     .select("*")
     .eq("id", artistId)
@@ -93,7 +145,15 @@ export async function getArtist(artistId: string): Promise<Artist | null> {
 }
 
 export async function getArtistByWallet(wallet: string): Promise<Artist | null> {
-  const { data, error } = await supabase
+  if (useMockData) {
+    for (const artist of mockArtists.values()) {
+      if (artist.wallet_address === wallet.toLowerCase()) {
+        return artist;
+      }
+    }
+    return null;
+  }
+  const { data, error } = await supabase!
     .from("artists")
     .select("*")
     .eq("wallet_address", wallet.toLowerCase())
@@ -107,7 +167,22 @@ export async function createArtist(
   displayName: string,
   ensName: string
 ): Promise<Artist> {
-  const { data, error } = await supabase
+  if (useMockData) {
+    const artist: Artist = {
+      id: generateId(),
+      wallet_address: wallet.toLowerCase(),
+      ens_name: ensName,
+      display_name: displayName,
+      avatar_url: null,
+      usdc_earned: 0,
+      total_streams: 0,
+      created_at: new Date().toISOString(),
+    };
+    mockArtists.set(artist.id, artist);
+    console.log(`📝 Mock: Created artist ${displayName} (${artist.id})`);
+    return artist;
+  }
+  const { data, error } = await supabase!
     .from("artists")
     .insert({
       wallet_address: wallet.toLowerCase(),
@@ -121,7 +196,14 @@ export async function createArtist(
 }
 
 export async function creditArtistEarnings(artistId: string, usdc: number): Promise<void> {
-  const { error } = await supabase.rpc("credit_artist_earnings", {
+  if (useMockData) {
+    const artist = mockArtists.get(artistId);
+    if (artist) {
+      artist.usdc_earned += usdc;
+    }
+    return;
+  }
+  const { error } = await supabase!.rpc("credit_artist_earnings", {
     p_artist_id: artistId,
     p_usdc: usdc,
   });
@@ -133,7 +215,14 @@ export async function creditArtistEarnings(artistId: string, usdc: number): Prom
 // ═══════════════════════════════════════════════
 
 export async function getTracks(artistId?: string): Promise<Track[]> {
-  let query = supabase.from("tracks").select("*");
+  if (useMockData) {
+    const tracks = Array.from(mockTracks.values());
+    if (artistId) {
+      return tracks.filter(t => t.artist_id === artistId);
+    }
+    return tracks;
+  }
+  let query = supabase!.from("tracks").select("*");
   if (artistId) query = query.eq("artist_id", artistId);
   const { data, error } = await query;
   if (error) throw error;
@@ -141,7 +230,10 @@ export async function getTracks(artistId?: string): Promise<Track[]> {
 }
 
 export async function getTrack(trackId: string): Promise<Track | null> {
-  const { data, error } = await supabase
+  if (useMockData) {
+    return mockTracks.get(trackId) || null;
+  }
+  const { data, error } = await supabase!
     .from("tracks")
     .select("*")
     .eq("id", trackId)
@@ -159,7 +251,25 @@ export async function createTrack(
   genre?: string
 ): Promise<Track> {
   const chunks = Math.ceil(durationSeconds / 5); // 5-second chunks
-  const { data, error } = await supabase
+  if (useMockData) {
+    const track: Track = {
+      id: generateId(),
+      artist_id: artistId,
+      title,
+      duration_seconds: durationSeconds,
+      chunks,
+      is_private: isPrivate,
+      audio_url: audioUrl ?? null,
+      cover_url: null,
+      genre: genre ?? "other",
+      play_count: 0,
+      created_at: new Date().toISOString(),
+    };
+    mockTracks.set(track.id, track);
+    console.log(`📝 Mock: Created track "${title}" (${track.id})`);
+    return track;
+  }
+  const { data, error } = await supabase!
     .from("tracks")
     .insert({
       artist_id: artistId,
@@ -177,7 +287,13 @@ export async function createTrack(
 }
 
 export async function updateTrackAudio(trackId: string, audioUrl: string): Promise<Track> {
-  const { data, error } = await supabase
+  if (useMockData) {
+    const track = mockTracks.get(trackId);
+    if (!track) throw new Error("Track not found");
+    track.audio_url = audioUrl;
+    return track;
+  }
+  const { data, error } = await supabase!
     .from("tracks")
     .update({ audio_url: audioUrl })
     .eq("id", trackId)
@@ -349,9 +465,16 @@ export async function uploadAudioFile(
   fileBuffer: Buffer,
   contentType: string = "audio/mpeg"
 ): Promise<string> {
+  if (useMockData) {
+    // In mock mode, return a fake URL
+    const mockUrl = `https://mock-storage.beatstream.local/audio/tracks/${Date.now()}_${fileName}`;
+    console.log(`📝 Mock: Audio uploaded to ${mockUrl}`);
+    return mockUrl;
+  }
+
   const filePath = `tracks/${Date.now()}_${fileName}`;
 
-  const { error } = await supabase.storage
+  const { error } = await supabase!.storage
     .from("audio")
     .upload(filePath, fileBuffer, {
       contentType,
@@ -361,7 +484,7 @@ export async function uploadAudioFile(
   if (error) throw error;
 
   // Get the public URL
-  const { data: urlData } = supabase.storage
+  const { data: urlData } = supabase!.storage
     .from("audio")
     .getPublicUrl(filePath);
 
@@ -376,7 +499,13 @@ export async function updateArtist(
   artistId: string,
   updates: { bio?: string; genre?: string; avatar_url?: string; ens_registered?: boolean }
 ): Promise<Artist> {
-  const { data, error } = await supabase
+  if (useMockData) {
+    const artist = mockArtists.get(artistId);
+    if (!artist) throw new Error("Artist not found");
+    Object.assign(artist, updates);
+    return artist;
+  }
+  const { data, error } = await supabase!
     .from("artists")
     .update(updates)
     .eq("id", artistId)
