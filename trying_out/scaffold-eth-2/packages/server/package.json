@@ -13,7 +13,7 @@
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.1.0",
     "@circle-fin/smart-contract-platform": "^10.1.0",
-    "@erc7824/nitrolite": "^0.2.0",
+    "@erc7824/nitrolite": "^0.5.3",
     "@supabase/supabase-js": "^2.49.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
