@@ -15,7 +15,7 @@ import {
   creditArtistEarnings,
 } from "../db/supabase.js";
 import { verifySig, buildAuthMessage } from "../lib/verify.js";
-import { openChannel, closeChannel } from "../services/yellow.js";
+import { openStreamSession, closeStreamSession } from "../services/yellow.js";
 import { settlePayment } from "../services/arc.js";
 import { checkFanSubdomainEligibility, generateFanSubdomain } from "../services/ens.js";
 import { BEATS_PER_USDC } from "../config/constants.js";
@@ -28,7 +28,7 @@ const router = Router();
  *
  * Starts a streaming session:
  * 1. Verifies user has beats balance
- * 2. Opens a Yellow Network state channel
+ * 2. Opens a Yellow Network app session (state channel)
  * 3. Creates session in DB
  */
 router.post("/start", async (req: Request, res: Response): Promise<void> => {
@@ -66,11 +66,15 @@ router.post("/start", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Open Yellow Network state channel
-    const channel = await openChannel(wallet, user.beats_balance);
-
-    // Create session in DB
+    // Create session in DB first (we need the session ID for Yellow)
     const session = await createSession(wallet, track.artist_id, trackId);
+
+    // Open Yellow Network app session (state channel)
+    const yellowSession = await openStreamSession(
+      session.session_id,
+      wallet,
+      user.beats_balance
+    );
 
     console.log(
       `▶️  Stream started: ${wallet} → track "${track.title}" (session: ${session.session_id})`
@@ -78,9 +82,9 @@ router.post("/start", async (req: Request, res: Response): Promise<void> => {
 
     res.status(201).json({
       session,
-      channel: channel
-        ? { channelId: channel.channelId }
-        : { channelId: null, note: "Yellow channel not available, using fallback" },
+      yellow: yellowSession
+        ? { appSessionId: yellowSession.appSessionId }
+        : { appSessionId: null, note: "Yellow session not available, using fallback" },
       beatsBalance: user.beats_balance,
     });
   } catch (err) {
@@ -94,9 +98,9 @@ router.post("/start", async (req: Request, res: Response): Promise<void> => {
  * Body: { wallet, sessionId, signature, nonce }
  *
  * Ends a streaming session:
- * 1. Closes Yellow Network state channel
- * 2. Settles payment via Circle Arc
- * 3. Credits artist earnings
+ * 1. Closes Yellow Network app session
+ * 2. Settles payment via Circle Arc (vault.settle())
+ * 3. Credits artist earnings in DB
  * 4. Checks fan subdomain eligibility
  */
 router.post("/settle", async (req: Request, res: Response): Promise<void> => {
@@ -134,16 +138,19 @@ router.post("/settle", async (req: Request, res: Response): Promise<void> => {
     const totalBeats = session.total_beats_paid;
     const usdcAmount = totalBeats / BEATS_PER_USDC;
 
-    // Close Yellow channel (if active)
-    await closeChannel(`ch-${sessionId}`);
+    // 1. Close Yellow app session
+    const user = await getUser(wallet);
+    const userRemaining = user?.beats_balance ?? 0;
+    await closeStreamSession(sessionId, wallet, userRemaining, totalBeats);
 
-    // Settle payment via Circle Arc
+    // 2. Settle payment via Circle Arc (call vault.settle on-chain)
     const artist = await getArtist(session.artist_id);
     let settlement = null;
     if (artist && totalBeats > 0) {
       settlement = await settlePayment({
         totalBeats,
         artistWallet: artist.wallet_address,
+        userWallet: wallet,
         sessionId,
       });
 
@@ -153,10 +160,10 @@ router.post("/settle", async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    // Mark session as settled
+    // 3. Mark session as settled in DB
     const settled = await settleSession(sessionId);
 
-    // Check fan subdomain eligibility
+    // 4. Check fan subdomain eligibility (ENS integration)
     let fanSubdomain = null;
     if (artist && checkFanSubdomainEligibility(totalBeats)) {
       fanSubdomain = generateFanSubdomain(wallet, artist.ens_name);

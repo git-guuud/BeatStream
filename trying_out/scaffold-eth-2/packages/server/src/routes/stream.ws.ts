@@ -1,6 +1,12 @@
 // ──────────────────────────────────────────────
 // WebSocket Stream Handler
 // Real-time beat-per-second deduction during playback
+//
+// Protocol:
+//   Client → { type: "start_stream", sessionId, wallet, channelId? }
+//   Server → { type: "beat_tick", secondsPlayed, beatsRemaining, ... } (every 1s)
+//   Client → { type: "heartbeat", signature }
+//   Client → { type: "pause_stream" | "resume_stream" | "stop_stream" }
 // ──────────────────────────────────────────────
 import { WebSocketServer, type WebSocket as WS } from "ws";
 import type { IncomingMessage } from "http";
@@ -10,32 +16,32 @@ import {
   debitBeat,
   incrementSessionPayment,
 } from "../db/supabase.js";
-import { updateChannelState } from "../services/yellow.js";
+import { updateStreamState } from "../services/yellow.js";
 import { verifySig, buildStreamVoucherMessage } from "../lib/verify.js";
 
 interface ActiveStream {
   sessionId: string;
   wallet: string;
-  channelId: string | null;
+  appSessionId: string | null; // Yellow Network app session ID
   interval: ReturnType<typeof setInterval> | null;
   secondsPlayed: number;
   totalBeatsPaid: number;
 }
 
-// Track active streams by WebSocket
+// Track active streams by WebSocket connection
 const activeStreams = new Map<WS, ActiveStream>();
 
 export function initWebSocketServer(httpServer: Server): WebSocketServer {
   const wss = new WebSocketServer({ server: httpServer, path: "/ws/stream" });
 
-  wss.on("connection", (ws: WS, req: IncomingMessage) => {
+  wss.on("connection", (ws: WS, _req: IncomingMessage) => {
     console.log("🔌 WS client connected");
 
     ws.on("message", async (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
         await handleStreamMessage(ws, msg);
-      } catch (err) {
+      } catch {
         ws.send(JSON.stringify({ type: "error", message: "Invalid message" }));
       }
     });
@@ -61,36 +67,31 @@ async function handleStreamMessage(ws: WS, msg: Record<string, unknown>) {
     case "start_stream":
       await handleStartStream(ws, msg);
       break;
-
     case "heartbeat":
       await handleHeartbeat(ws, msg);
       break;
-
     case "pause_stream":
       handlePauseStream(ws);
       break;
-
     case "resume_stream":
       handleResumeStream(ws);
       break;
-
     case "stop_stream":
       handleStopStream(ws);
       break;
-
     default:
       ws.send(JSON.stringify({ type: "error", message: `Unknown type: ${type}` }));
   }
 }
 
 /**
- * Client sends: { type: "start_stream", sessionId, wallet, channelId? }
+ * Client sends: { type: "start_stream", sessionId, wallet, appSessionId? }
  * Server starts the per-second beat deduction loop.
  */
 async function handleStartStream(ws: WS, msg: Record<string, unknown>) {
   const sessionId = msg.sessionId as string;
   const wallet = msg.wallet as string;
-  const channelId = (msg.channelId as string) ?? null;
+  const appSessionId = (msg.appSessionId as string) ?? null;
 
   if (!sessionId || !wallet) {
     ws.send(JSON.stringify({ type: "error", message: "Missing sessionId or wallet" }));
@@ -107,7 +108,7 @@ async function handleStartStream(ws: WS, msg: Record<string, unknown>) {
   const stream: ActiveStream = {
     sessionId,
     wallet: wallet.toLowerCase(),
-    channelId,
+    appSessionId,
     interval: null,
     secondsPlayed: 0,
     totalBeatsPaid: session.total_beats_paid,
@@ -132,10 +133,10 @@ async function handleStartStream(ws: WS, msg: Record<string, unknown>) {
 }
 
 /**
- * Every second: debit 1 beat from user, update channel state
+ * Every second: debit 1 beat from user, update Yellow state channel
  */
 async function tickBeat(ws: WS, stream: ActiveStream) {
-  // Debit 1 beat from user
+  // Debit 1 beat from user's DB balance
   const newBalance = await debitBeat(stream.wallet);
 
   if (newBalance < 0) {
@@ -147,8 +148,6 @@ async function tickBeat(ws: WS, stream: ActiveStream) {
         totalBeatsPaid: stream.totalBeatsPaid,
       })
     );
-
-    // Auto-stop
     if (stream.interval) clearInterval(stream.interval);
     stream.interval = null;
     return;
@@ -157,17 +156,17 @@ async function tickBeat(ws: WS, stream: ActiveStream) {
   stream.secondsPlayed += 1;
   stream.totalBeatsPaid += 1;
 
-  // Record payment in session
+  // Record payment in session DB
   const signature = `auto_${Date.now()}`; // In production: client-signed voucher
   await incrementSessionPayment(stream.sessionId, signature);
 
-  // Update Yellow channel state (shift 1 beat from user → server)
-  if (stream.channelId) {
-    await updateChannelState(
-      stream.channelId,
+  // Update Yellow Network app session state (shift 1 beat: user → server)
+  if (stream.appSessionId) {
+    await updateStreamState(
+      stream.sessionId,
       stream.wallet,
-      newBalance,
-      stream.totalBeatsPaid
+      newBalance,          // user's remaining beats
+      stream.totalBeatsPaid // server's accumulated beats
     );
   }
 

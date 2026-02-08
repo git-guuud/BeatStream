@@ -32,7 +32,7 @@ const deployBeatStream: DeployFunction = async function (hre: HardhatRuntimeEnvi
 
   // 3. Mint some test USDC to deployer for testing
   const mockUSDCContract = await hre.ethers.getContract<Contract>("MockUSDC", deployer);
-  const mintTx = await mockUSDCContract.mint(deployer, 1000_000_000n); // 1000 USDC
+  const mintTx = await mockUSDCContract.mint(deployer, 1000_000_000n, { gasLimit: 100_000 });
   await mintTx.wait();
   console.log("🪙 Minted 1000 USDC to deployer:", deployer);
 };
