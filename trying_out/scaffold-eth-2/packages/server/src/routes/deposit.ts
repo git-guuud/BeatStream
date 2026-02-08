@@ -91,4 +91,45 @@ router.post("/verify", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+/**
+ * POST /api/deposit/dev-faucet
+ * Body: { wallet, beats, signature, nonce }
+ *
+ * DEV ONLY — credit free beats for testing.
+ * Only available when NODE_ENV !== "production".
+ */
+router.post("/dev-faucet", async (req: Request, res: Response): Promise<void> => {
+  if (process.env.NODE_ENV === "production") {
+    res.status(403).json({ error: "Not available in production" });
+    return;
+  }
+  try {
+    const { wallet, beats, signature, nonce } = req.body;
+    if (!wallet || !beats || !signature || nonce === undefined) {
+      res.status(400).json({ error: "Missing required fields" });
+      return;
+    }
+
+    const message = buildAuthMessage(wallet, nonce);
+    const valid = await verifySig(message, signature, wallet);
+    if (!valid) {
+      res.status(401).json({ error: "Invalid signature" });
+      return;
+    }
+
+    const user = await getUser(wallet);
+    if (!user) {
+      res.status(404).json({ error: "User not found. Register first." });
+      return;
+    }
+
+    const newBalance = await creditBeats(wallet, beats);
+    console.log(`🧪 Dev faucet: ${wallet} → +${beats} beats (balance: ${newBalance})`);
+    res.json({ success: true, beatsCredit: beats, newBalance });
+  } catch (err) {
+    console.error("Dev faucet error:", err);
+    res.status(500).json({ error: "Dev faucet failed" });
+  }
+});
+
 export default router;
