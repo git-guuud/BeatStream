@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PlayerBar } from "./_components/PlayerBar";
+import { BeatStreamNav } from "./_components/BeatStreamNav";
+import { useBeats } from "./_components/BeatsContext";
 import { 
   fetchArtists, 
   fetchTracks, 
@@ -54,13 +56,15 @@ function toDisplayTrack(track: Track, artists: Artist[]): DisplayTrack {
 export default function BeatStreamPage() {
   const [artists, setArtists] = useState<DisplayArtist[]>(mockArtists);
   const [allTracks, setAllTracks] = useState<DisplayTrack[]>(mockTracks);
-  const [selectedArtist, setSelectedArtist] = useState<DisplayArtist | null>(null);
+  const [selectedArtist, setSelectedArtist] = useState<DisplayArtist | null>(mockArtists[0]);
   const [currentTrack, setCurrentTrack] = useState<DisplayTrack | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingApi, setIsLoadingApi] = useState(true);
   const [useApi, setUseApi] = useState(false);
   const shouldAutoAdvance = useRef(false);
+
+  const { beatsBalance, decrementBeat, isLowOnBeats, isOutOfBeats } = useBeats();
 
   // Fetch data from API on mount
   useEffect(() => {
@@ -87,9 +91,8 @@ export default function BeatStreamPage() {
       } catch (err) {
         // Fallback to mock data if API fails
         console.log("ℹ️ Using mock data (API unavailable)");
-        setSelectedArtist(mockArtists[0]);
       } finally {
-        setIsLoading(false);
+        setIsLoadingApi(false);
       }
     }
     loadData();
@@ -114,12 +117,16 @@ export default function BeatStreamPage() {
     }
   }, [currentTime, currentTrack, allTracks, artists]);
 
-  // Simulate playback timer
+  // Simulate playback timer - deducts 1 beat per second
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
     
-    if (isPlaying && currentTrack) {
+    if (isPlaying && currentTrack && beatsBalance > 0) {
       interval = setInterval(() => {
+        const shouldStop = decrementBeat();
+        if (shouldStop) {
+          setIsPlaying(false);
+        }
         setCurrentTime(prev => {
           if (prev >= currentTrack.duration) {
             shouldAutoAdvance.current = true;
@@ -133,16 +140,19 @@ export default function BeatStreamPage() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isPlaying, currentTrack]);
+  }, [isPlaying, currentTrack, beatsBalance, decrementBeat]);
 
   const handlePlayPause = useCallback(() => {
+    // Don't allow playing if out of beats
+    if (beatsBalance <= 0) return;
+    
     if (!currentTrack && artistTracks.length > 0) {
       setCurrentTrack(artistTracks[0]);
       setIsPlaying(true);
     } else {
       setIsPlaying(prev => !prev);
     }
-  }, [currentTrack, artistTracks]);
+  }, [currentTrack, artistTracks, beatsBalance]);
 
   const handleNext = useCallback(() => {
     if (!currentTrack || allTracks.length === 0) return;
@@ -171,6 +181,7 @@ export default function BeatStreamPage() {
   }, [currentTrack, allTracks, artists]);
 
   const handleTrackSelect = (track: DisplayTrack) => {
+    if (beatsBalance <= 0) return; // Don't play if out of beats
     setCurrentTrack(track);
     setCurrentTime(0);
     setIsPlaying(true);
@@ -180,22 +191,29 @@ export default function BeatStreamPage() {
     setSelectedArtist(artist);
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="text-xl">Loading BeatStream...</div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex h-screen pb-24">
+    <div className="flex flex-col h-screen pb-24">
+      {/* Top Navigation Bar */}
+      <BeatStreamNav />
+
+      {/* Low Beats Warning Banner */}
+      {isLowOnBeats && (
+        <div className="bg-warning text-warning-content px-4 py-2 text-center text-sm font-medium">
+          ⚠️ Low on Beats! Only {beatsBalance} beats remaining. <a href="/beatstream/deposit" className="underline font-bold">Top up now</a> to continue streaming.
+        </div>
+      )}
+      
+      {/* Out of Beats Banner */}
+      {isOutOfBeats && (
+        <div className="bg-error text-error-content px-4 py-2 text-center text-sm font-medium">
+          🚫 You're out of Beats! <a href="/beatstream/deposit" className="underline font-bold">Deposit USDC</a> to continue streaming.
+        </div>
+      )}
+
+      <div className="flex flex-1 overflow-hidden">
       {/* Left Sidebar - Artists */}
       <aside className="w-64 bg-base-200 border-r border-base-content/10 overflow-y-auto">
         <div className="p-4">
-          <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-            🎵 BeatStream
-          </h2>
           <h3 className="text-sm font-semibold text-base-content/60 uppercase tracking-wider mb-3">
             Artists {useApi && <span className="text-xs text-success">(Live)</span>}
           </h3>
@@ -304,12 +322,16 @@ export default function BeatStreamPage() {
           )}
         </div>
       </main>
+      </div>
 
       {/* Player Bar */}
       <PlayerBar
         currentTrack={currentTrack}
         isPlaying={isPlaying}
         currentTime={currentTime}
+        beatsBalance={beatsBalance}
+        isLowOnBeats={isLowOnBeats}
+        isOutOfBeats={isOutOfBeats}
         onPlayPause={handlePlayPause}
         onNext={handleNext}
         onPrevious={handlePrevious}

@@ -20,6 +20,9 @@ interface PlayerBarProps {
   currentTrack: DisplayTrack | null;
   isPlaying: boolean;
   currentTime: number;
+  beatsBalance: number;
+  isLowOnBeats: boolean;
+  isOutOfBeats: boolean;
   onPlayPause: () => void;
   onNext: () => void;
   onPrevious: () => void;
@@ -29,6 +32,9 @@ export function PlayerBar({
   currentTrack,
   isPlaying,
   currentTime,
+  beatsBalance,
+  isLowOnBeats,
+  isOutOfBeats,
   onPlayPause,
   onNext,
   onPrevious,
@@ -77,8 +83,9 @@ export function PlayerBar({
             {/* Play/Pause Button */}
             <button
               onClick={onPlayPause}
-              className="btn btn-circle btn-primary"
-              disabled={!currentTrack}
+              className={`btn btn-circle ${isOutOfBeats ? "btn-error" : "btn-primary"}`}
+              disabled={!currentTrack || isOutOfBeats}
+              title={isOutOfBeats ? "Out of beats - top up to continue" : undefined}
             >
               {isPlaying ? (
                 <svg
@@ -143,10 +150,17 @@ export function PlayerBar({
           </div>
         </div>
 
-        {/* Beats Counter (Demo) */}
+        {/* Beats Counter */}
         <div className="w-48 text-right">
           <div className="text-sm text-base-content/60">Beats Balance</div>
-          <div className="font-bold text-accent">{currentTime} 🎵</div>
+          <div className={`font-bold ${
+            isOutOfBeats ? "text-error" : isLowOnBeats ? "text-warning" : "text-success"
+          }`}>
+            {beatsBalance.toLocaleString()} 🎵
+          </div>
+          {isOutOfBeats && (
+            <div className="text-xs text-error">Top up to continue</div>
+          )}
         </div>
       </div>
     </div>
